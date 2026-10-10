@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { PlusCircle } from "lucide-react";
+import { ArrowRightLeft, PlusCircle } from "lucide-react";
 
+import { ConfirmDeleteButton } from "@/components/confirm-button";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,12 +33,24 @@ import { useEnrollmentStore } from "@/lib/enrollment-store";
 
 export default function StudentEnrollmentsPage() {
   const studentId = useAuthStore((s) => s.studentId);
-  const { students, courses, enrollments, enroll } = useEnrollmentStore();
+  const {
+    students,
+    courses,
+    enrollments,
+    enroll,
+    updateEnrollment,
+    dropEnrollment,
+  } = useEnrollmentStore();
 
   const [open, setOpen] = useState(false);
   const [formCourse, setFormCourse] = useState<string | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [editingCourseId, setEditingCourseId] = useState<string | null>(null);
+  const [newCourseId, setNewCourseId] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [updating, setUpdating] = useState(false);
+  const [dropError, setDropError] = useState<string | null>(null);
 
   const me = students.find((s) => s.studentId === studentId);
   const myEnrollments = enrollments.filter((e) => e.studentId === studentId);
@@ -60,6 +73,12 @@ export default function StudentEnrollmentsPage() {
     }
   };
 
+  const handleEditOpenChange = (next: boolean, courseId?: string) => {
+    setEditingCourseId(next ? (courseId ?? null) : null);
+    setNewCourseId(null);
+    setEditError(null);
+  };
+
   const handleEnroll = async () => {
     if (!studentId || !formCourse) return;
     setSubmitting(true);
@@ -74,6 +93,30 @@ export default function StudentEnrollmentsPage() {
     }
   };
 
+  const handleUpdate = async () => {
+    if (!studentId || !editingCourseId || !newCourseId) return;
+    setUpdating(true);
+    setEditError(null);
+    try {
+      await updateEnrollment(studentId, editingCourseId, newCourseId);
+      handleEditOpenChange(false);
+    } catch (err) {
+      setEditError((err as Error).message);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleDrop = async (courseId: string) => {
+    if (!studentId) return;
+    setDropError(null);
+    try {
+      await dropEnrollment(studentId, courseId);
+    } catch (err) {
+      setDropError((err as Error).message);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -82,7 +125,7 @@ export default function StudentEnrollmentsPage() {
           <p className="text-sm text-muted-foreground">
             {me
               ? `${me.studentId} — ${me.firstName} ${me.lastName} (${me.program})`
-              : (studentId ?? "-")}{" "}
+              : (studentId ?? "-")} {" "}
             · ลงทะเบียนแล้ว {myEnrollments.length} วิชา
           </p>
         </div>
@@ -140,6 +183,12 @@ export default function StudentEnrollmentsPage() {
         </Dialog>
       </div>
 
+      {dropError && (
+        <p className="text-sm text-destructive">
+          ยกเลิกการลงทะเบียนไม่สำเร็จ: {dropError}
+        </p>
+      )}
+
       <div className="rounded-lg border">
         <Table>
           <TableHeader>
@@ -148,13 +197,14 @@ export default function StudentEnrollmentsPage() {
               <TableHead>ชื่อวิชา</TableHead>
               <TableHead>ผู้สอน</TableHead>
               <TableHead>วันที่ลงทะเบียน</TableHead>
+              <TableHead className="w-24 text-right">Action</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {myEnrollments.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={4}
+                  colSpan={5}
                   className="h-20 text-center text-muted-foreground"
                 >
                   ยังไม่ได้ลงทะเบียนวิชาใด
@@ -172,6 +222,89 @@ export default function StudentEnrollmentsPage() {
                     {e.enrolledAt
                       ? new Date(e.enrolledAt).toLocaleString("th-TH")
                       : "-"}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Dialog
+                      open={editingCourseId === e.courseId}
+                      onOpenChange={(next) =>
+                        handleEditOpenChange(next, e.courseId)
+                      }
+                    >
+                      <DialogTrigger
+                        render={
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`เปลี่ยนวิชา ${e.courseId}`}
+                          />
+                        }
+                      >
+                        <ArrowRightLeft className="h-4 w-4" />
+                      </DialogTrigger>
+                      <DialogContent className="sm:max-w-lg">
+                        <DialogHeader>
+                          <DialogTitle>เปลี่ยนวิชา</DialogTitle>
+                          <DialogDescription>
+                            เปลี่ยนจาก {e.courseId} — {course?.courseTitle ?? "-"}
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="grid gap-1.5">
+                          <Label htmlFor={`newCourse-${e.courseId}`}>
+                            วิชาใหม่
+                          </Label>
+                          <Select
+                            items={courseOptions}
+                            value={newCourseId}
+                            onValueChange={(value) => {
+                              setNewCourseId(value as string);
+                              setEditError(null);
+                            }}
+                          >
+                            <SelectTrigger
+                              id={`newCourse-${e.courseId}`}
+                              className="w-full"
+                            >
+                              <SelectValue
+                                placeholder={
+                                  courseOptions.length === 0
+                                    ? "ไม่มีวิชาที่สามารถเปลี่ยนได้"
+                                    : "เลือกวิชาใหม่"
+                                }
+                              />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {courseOptions.map((option) => (
+                                <SelectItem
+                                  key={option.value}
+                                  value={option.value}
+                                >
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        {editError && (
+                          <p className="text-sm text-destructive">
+                            {editError}
+                          </p>
+                        )}
+                        <DialogFooter>
+                          <Button
+                            disabled={!newCourseId || updating}
+                            onClick={handleUpdate}
+                          >
+                            {updating ? "กำลังบันทึก..." : "บันทึก"}
+                          </Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+                    <ConfirmDeleteButton
+                      label={`ยกเลิกวิชา ${e.courseId}`}
+                      title={`ยกเลิกการลงทะเบียน ${e.courseId}?`}
+                      description={`${course?.courseTitle ?? e.courseId} จะถูกลบออกจากรายการวิชาที่ลงทะเบียน`}
+                      onConfirm={() => handleDrop(e.courseId)}
+                    />
                   </TableCell>
                 </TableRow>
               );
